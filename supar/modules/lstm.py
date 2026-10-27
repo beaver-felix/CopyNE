@@ -3,7 +3,7 @@
 import torch
 import torch.nn as nn
 from supar.modules.dropout import SharedDropout
-from torch.nn.modules.rnn import apply_permutation
+
 from torch.nn.utils.rnn import PackedSequence, pack_padded_sequence
 
 
@@ -151,8 +151,8 @@ class VariationalLSTM(nn.Module):
             return hx
         assert len(hx[0].shape) > 1
         dim = 1 if len(hx[0].shape) == 3 else 0
-        h = apply_permutation(hx[0], permutation, dim=dim)
-        c = apply_permutation(hx[1], permutation, dim=dim)
+        h = hx[0].index_select(dim, permutation)
+        c = hx[1].index_select(dim, permutation)
 
         return h, c
 
