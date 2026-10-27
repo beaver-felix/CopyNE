@@ -1,16 +1,35 @@
+import math
+import random
 from typing import Optional, Tuple, List, Union, Dict, Any
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+import yaml
+from transformers import (
+    BartConfig,
+    BartModel,
+    BartForConditionalGeneration,
+    BartPretrainedModel,
+)
 from transformers.models.bart.modeling_bart import *
-from transformers.models.bart.modeling_bart import BartEncoder, BartDecoder
-from transformers.modeling_outputs import BaseModelOutput
+from transformers.models.bart.modeling_bart import (
+    BartEncoder,
+    BartDecoder,
+    BartEncoderLayer,
+    BartDecoderLayer,
+    BartLearnedPositionalEmbedding,
+)
+from transformers.modeling_outputs import (
+    BaseModelOutput,
+    BaseModelOutputWithPastAndCrossAttentions,
+    Seq2SeqModelOutput,
+    Seq2SeqLMOutput,
+)
+from wenet.utils.cmvn import load_cmvn
 from wenet.transformer.cmvn import GlobalCMVN
 from wenet.transformer.encoder import TransformerEncoder as SpTransformerEncoder
 from wenet.transformer.label_smoothing_loss import LabelSmoothingLoss
 from wenet.transformer.ctc import CTC
-import yaml
-import torch.nn as nn
-import torch
 
 MIN = -1e32
 
