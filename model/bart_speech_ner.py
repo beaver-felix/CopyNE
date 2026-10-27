@@ -1,3 +1,6 @@
+from typing import Optional, Tuple, List, Union, Dict, Any
+import torch
+import torch.nn as nn
 from transformers.models.bart.modeling_bart import *
 from transformers.models.bart.modeling_bart import BartEncoder, BartDecoder
 from transformers.modeling_outputs import BaseModelOutput 

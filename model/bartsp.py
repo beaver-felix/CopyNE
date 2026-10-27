@@ -1,6 +1,9 @@
+from typing import Optional, Tuple, List, Union, Dict, Any
+import torch
+import torch.nn as nn
 from transformers.models.bart.modeling_bart import *
-from transformers.models.bart.modeling_bart import BartEncoder, BartDecoder 
-from wenet.utils.cmvn import load_cmvn
+from transformers.models.bart.modeling_bart import BartEncoder, BartDecoder
+from transformers.modeling_outputs import BaseModelOutput
 from wenet.transformer.cmvn import GlobalCMVN
 from wenet.transformer.encoder import TransformerEncoder as SpTransformerEncoder
 from wenet.transformer.label_smoothing_loss import LabelSmoothingLoss
