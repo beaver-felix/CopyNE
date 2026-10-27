@@ -293,9 +293,9 @@ def speed_perturb(data, speeds=None):
         waveform = sample['wav']
         speed = random.choice(speeds)
         if speed != 1.0:
-            wav, _ = torchaudio.sox_effects.apply_effects_tensor(
-                waveform, sample_rate,
-                [['speed', str(speed)], ['rate', str(sample_rate)]])
+            wav, new_freq = torchaudio.functional.speed(
+                waveform, sample_rate, speed)
+            wav = torchaudio.functional.resample(wav, new_freq, sample_rate)
             sample['wav'] = wav
 
         yield sample

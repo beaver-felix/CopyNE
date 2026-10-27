@@ -135,9 +135,9 @@ class Dataset(torch.utils.data.Dataset):
             speeds = [0.9, 1.0, 1.1]
             speed = random.choice(speeds)
             if speed != 1.0:
-                waveform, _ = ta.sox_effects.apply_effects_tensor(
-                waveform, sample_frequency,
-                [['speed', str(speed)], ['rate', str(sample_frequency)]])
+                waveform, new_freq = ta.functional.speed(
+                    waveform, sample_frequency, speed)
+                waveform = ta.functional.resample(waveform, new_freq, sample_frequency)
         
         # compute fbank
         waveform = waveform * (1 << 15)
@@ -359,9 +359,9 @@ class NERDataset(torch.utils.data.Dataset):
             speeds = [0.9, 1.0, 1.1]
             speed = random.choice(speeds)
             if speed != 1.0:
-                waveform, _ = ta.sox_effects.apply_effects_tensor(
-                waveform, sample_frequency,
-                [['speed', str(speed)], ['rate', str(sample_frequency)]])
+                waveform, new_freq = ta.functional.speed(
+                    waveform, sample_frequency, speed)
+                waveform = ta.functional.resample(waveform, new_freq, sample_frequency)
         
         # compute fbank
         waveform = waveform * (1 << 15)
@@ -490,9 +490,9 @@ class BartSeq2SeqDataset(torch.utils.data.Dataset):
             speeds = [0.9, 1.0, 1.1]
             speed = random.choice(speeds)
             if speed != 1.0:
-                waveform, _ = ta.sox_effects.apply_effects_tensor(
-                waveform, sample_frequency,
-                [['speed', str(speed)], ['rate', str(sample_frequency)]])
+                waveform, new_freq = ta.functional.speed(
+                    waveform, sample_frequency, speed)
+                waveform = ta.functional.resample(waveform, new_freq, sample_frequency)
         
         # compute fbank
         waveform = waveform * (1 << 15)
@@ -673,9 +673,9 @@ class CLASDataset(Dataset):
             speeds = [0.9, 1.0, 1.1]
             speed = random.choice(speeds)
             if speed != 1.0:
-                waveform, _ = ta.sox_effects.apply_effects_tensor(
-                waveform, sample_frequency,
-                [['speed', str(speed)], ['rate', str(sample_frequency)]])
+                waveform, new_freq = ta.functional.speed(
+                    waveform, sample_frequency, speed)
+                waveform = ta.functional.resample(waveform, new_freq, sample_frequency)
 
         # compute fbank
         waveform = waveform * (1 << 15)
@@ -954,9 +954,9 @@ class CopyASRDataset(Dataset):
             speeds = [0.9, 1.0, 1.1]
             speed = random.choice(speeds)
             if speed != 1.0:
-                waveform, _ = ta.sox_effects.apply_effects_tensor(
-                waveform, sample_frequency,
-                [['speed', str(speed)], ['rate', str(sample_frequency)]])
+                waveform, new_freq = ta.functional.speed(
+                    waveform, sample_frequency, speed)
+                waveform = ta.functional.resample(waveform, new_freq, sample_frequency)
 
         # compute fbank
         waveform = waveform * (1 << 15)
