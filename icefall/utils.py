@@ -18,6 +18,8 @@
 # limitations under the License.
 
 
+from __future__ import annotations
+
 import argparse
 import collections
 import json
@@ -1689,9 +1691,9 @@ def optim_step_and_measure_param_change(
 
         .. math::
 
-            \begin{aligned}
+            \\begin{aligned}
                 \\delta = \\frac{\\Vert\\theta - \\theta_{new}\\Vert^2}{\\Vert\\theta\\Vert^2}
-            \end{aligned}
+            \\end{aligned}
 
     This function is supposed to be used as follows:
 
