@@ -41,6 +41,8 @@ def main():
     parser.add_argument('--train', default='data/sp_ner/new_train.json', help='path to train file')
     parser.add_argument('--dev', default='data/end2end/dev_single_bracket.json', help='path to dev file')
     parser.add_argument('--test', default='data/sp_ner/new_test.json', help='path to test file')
+    parser.add_argument('--max_hours', type=float, default=None,
+                        help='stop training after this many hours (checked after each epoch)')
 
     args, unknown = parser.parse_known_args()
     args, _ = parser.parse_known_args(unknown, args)

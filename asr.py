@@ -1403,6 +1403,7 @@ class CopyNEASRParser(object):
             logger.info(f"\n dev:{len(dev_set):6}\n")
 
         elapsed = timedelta()
+        train_start = datetime.now()
         for epoch in range(self.start_epoch, self.epochs + 1):
             self.model.train()
             self.train_loader.sampler.set_epoch(epoch)
@@ -1512,6 +1513,12 @@ class CopyNEASRParser(object):
                         }, self.curr_model_path)
             
             torch.cuda.empty_cache()
+
+            if getattr(self.args, 'max_hours', None) is not None:
+                hours_elapsed = (datetime.now() - train_start).total_seconds() / 3600
+                if hours_elapsed >= self.args.max_hours:
+                    logger.info(f"Rank:{self.gpu_id} max_hours={self.args.max_hours:.2f}h reached after epoch {epoch} ({hours_elapsed:.2f}h elapsed). Stopping.\n")
+                    break
         
         if self.gpu_id == 0:
             logger.info(f"Epoch {self.best_epoch} saved")
