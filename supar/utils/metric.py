@@ -365,9 +365,9 @@ class AishellNerMetric(Metric):
         self.pred = 0.0
         self.gold = 0.0
         self.eps = eps
-        self.per_regex = '\[.+?\]'
-        self.loc_regex = '\(.+?\)'
-        self.org_regex = '\<.+?\>'
+        self.per_regex = r'\[.+?\]'
+        self.loc_regex = r'\(.+?\)'
+        self.org_regex = r'\<.+?\>'
 
     def collect_nes(self, preds, pred_txt):
         assert len(preds) == len(pred_txt)

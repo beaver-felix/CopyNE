@@ -36,6 +36,8 @@ from pathlib import Path
 from shutil import copyfile
 from typing import Dict, Iterable, List, Optional, TextIO, Tuple, Union
 
+Pathlike = Union[str, Path]
+
 try:
     import k2
     import k2.version
@@ -1688,7 +1690,7 @@ def optim_step_and_measure_param_change(
         .. math::
 
             \begin{aligned}
-                \delta = \frac{\Vert\theta - \theta_{new}\Vert^2}{\Vert\theta\Vert^2}
+                \\delta = \\frac{\\Vert\\theta - \\theta_{new}\\Vert^2}{\\Vert\\theta\\Vert^2}
             \end{aligned}
 
     This function is supposed to be used as follows:

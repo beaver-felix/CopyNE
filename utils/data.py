@@ -9,9 +9,9 @@ from supar.utils.field import SubwordField
 import os
 import json
 
-per_regex = '\[.+?\]'
-loc_regex = '\(.+?\)'
-org_regex = '\<.+?\>'
+per_regex = r'\[.+?\]'
+loc_regex = r'\(.+?\)'
+org_regex = r'\<.+?\>'
 
 def process_audio(audio_file, segment_length_sec=10, tgt_sample_rate=16000, tmp_dir = "tmp_dir"):
     if not os.path.exists(tmp_dir):
