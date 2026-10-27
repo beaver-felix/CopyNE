@@ -49,7 +49,7 @@ def init_logger(logger,
 def progress_bar(iterator,
                  ncols=None,
                  bar_format='{l_bar}{bar:18}| {n_fmt}/{total_fmt} {elapsed}<{remaining}, {rate_fmt}{postfix}',
-                 leave=False,
+                 leave=True,
                  **kwargs):
     return tqdm(iterator,
                 ncols=ncols,
