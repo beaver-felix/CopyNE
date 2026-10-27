@@ -1,22 +1,11 @@
 # CopyNE: Better Contextual ASR by Copying Named Entities
-This is the repo for CopyNE, a novel approach for contextual ASR. The paper has been accepted in ACL 2024. It can be found at [here](https://arxiv.org/abs/2305.12839).
-
-## Abstract
-End-to-end automatic speech recognition (ASR) systems have made significant progress in general scenarios. 
-However, it remains challenging to transcribe contextual named entities (NEs) in the contextual ASR scenario.
-Previous approaches have attempted to address this by utilizing the NE dictionary.
-These approaches treat entities as individual tokens and generate them token-by-token, which may result in incomplete transcriptions of entities.
-In this paper, we treat entities as indivisible wholes and introduce the idea of copying into ASR. 
-We design a systematic mechanism called CopyNE, which can copy entities from the NE dictionary.
-By copying all tokens of an entity at once, we can reduce errors during entity transcription, ensuring the completeness of the entity. 
-Experiments demonstrate that CopyNE consistently improves the accuracy of transcribing entities compared to previous approaches.
-Even when based on the strong Whisper, CopyNE still achieves notable improvements.
+This is the fork for CopyNE, a novel approach for contextual ASR. The paper has been accepted in ACL 2024. It can be found at [here](https://arxiv.org/abs/2305.12839).
 
 ## Installation
 In a Kaggle notebook cell:
 ```bash
 # Clone repository and enter directory
-!git clone https://github.com/zsLin177/CopyNE.git
+!git clone https://github.com/beaver-felix/CopyNE.git
 %cd CopyNE
 
 # Install requirements
@@ -37,14 +26,6 @@ In a Kaggle notebook cell:
 !python scripts/change_wav_path.py data_to_upload/aishell_dataset/test_addne.json data_to_upload
 !python scripts/change_wav_path.py data_to_upload/aishell_dataset/dev-ne.json data_to_upload
 !python scripts/change_wav_path.py data_to_upload/aishell_dataset/test-ne.json data_to_upload
-```
-
-## Pre-trained Model
-Pre-trained model for CopyNE available on [Google Drive](https://drive.google.com/drive/folders/1KP6JD7vFNkeo9ZWKba0ToDpQzd4Z1lhT?usp=sharing). Download in notebook:
-```bash
-!pip install gdown
-!mkdir -p exp/copyne_pretrained
-!gdown --folder "https://drive.google.com/drive/folders/1KP6JD7vFNkeo9ZWKba0ToDpQzd4Z1lhT?usp=sharing" -O exp/copyne_pretrained/
 ```
 
 ## Web Demo
@@ -109,17 +90,7 @@ Targeted for Kaggle GPUs (e.g. 2x T4 GPUs):
 
 
 ## Acknowledge
-1. We borrowed some code from [wenet](https://github.com/wenet-e2e/wenet) for some speech processing and modeling.
-2. We borrowed some code from [supar](https://github.com/yzhangcs/parser) for some tensor operations.
-
-## Citation
-If you find this repo helpful, please cite the following paper:
-```bibtex
-@article{zhou2023copyne,
-  title={CopyNE: Better Contextual ASR by Copying Named Entities},
-  author={Zhou, Shilin and Li, Zhenghua and Hong, Yu and Zhang, Min and Wang, Zhefeng and Huai, Baoxing},
-  journal={arXiv preprint arXiv:2305.12839},
-  year={2023}
-}
+1. I borrowed some code from [copyne](https://github.com/zslin177/copyne) for CopyNE's implementation.
+2. I borrowed some code from [icefall](https://github.com/k2-fsa/icefall) for Zipformer's implementation.
 ```
 
