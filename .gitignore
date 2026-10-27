@@ -1,0 +1,28 @@
+# data
+data
+
+# exp
+exp
+
+# py cache
+__pycache__
+
+# sh
+run.sh
+
+# res file
+*.asr
+*.pred
+*.wer
+*.all
+*.error
+*.out
+*.log
+*.cer
+*.ne-cer
+*.text
+
+# self file
+myselfscripts
+*.slurm
+tmp_dir*
