@@ -135,9 +135,8 @@ class Dataset(torch.utils.data.Dataset):
             speeds = [0.9, 1.0, 1.1]
             speed = random.choice(speeds)
             if speed != 1.0:
-                waveform, new_freq = ta.functional.speed(
+                waveform, _ = ta.functional.speed(
                     waveform, sample_frequency, speed)
-                waveform = ta.functional.resample(waveform, new_freq, sample_frequency)
         
         # compute fbank
         waveform = waveform * (1 << 15)
@@ -359,9 +358,8 @@ class NERDataset(torch.utils.data.Dataset):
             speeds = [0.9, 1.0, 1.1]
             speed = random.choice(speeds)
             if speed != 1.0:
-                waveform, new_freq = ta.functional.speed(
+                waveform, _ = ta.functional.speed(
                     waveform, sample_frequency, speed)
-                waveform = ta.functional.resample(waveform, new_freq, sample_frequency)
         
         # compute fbank
         waveform = waveform * (1 << 15)
@@ -490,9 +488,8 @@ class BartSeq2SeqDataset(torch.utils.data.Dataset):
             speeds = [0.9, 1.0, 1.1]
             speed = random.choice(speeds)
             if speed != 1.0:
-                waveform, new_freq = ta.functional.speed(
+                waveform, _ = ta.functional.speed(
                     waveform, sample_frequency, speed)
-                waveform = ta.functional.resample(waveform, new_freq, sample_frequency)
         
         # compute fbank
         waveform = waveform * (1 << 15)
@@ -673,9 +670,8 @@ class CLASDataset(Dataset):
             speeds = [0.9, 1.0, 1.1]
             speed = random.choice(speeds)
             if speed != 1.0:
-                waveform, new_freq = ta.functional.speed(
+                waveform, _ = ta.functional.speed(
                     waveform, sample_frequency, speed)
-                waveform = ta.functional.resample(waveform, new_freq, sample_frequency)
 
         # compute fbank
         waveform = waveform * (1 << 15)
@@ -954,9 +950,8 @@ class CopyASRDataset(Dataset):
             speeds = [0.9, 1.0, 1.1]
             speed = random.choice(speeds)
             if speed != 1.0:
-                waveform, new_freq = ta.functional.speed(
+                waveform, _ = ta.functional.speed(
                     waveform, sample_frequency, speed)
-                waveform = ta.functional.resample(waveform, new_freq, sample_frequency)
 
         # compute fbank
         waveform = waveform * (1 << 15)
