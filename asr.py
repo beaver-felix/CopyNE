@@ -26,6 +26,7 @@ from collections import Counter
 
 from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
+import torch.distributed as dist
 import os
 import torchaudio as ta
 from torchaudio.transforms import Resample
@@ -1389,6 +1390,102 @@ class CopyNEASRParser(object):
             self.test_context_tensor = build_context_tensor(self.test_context_vocab, self.symbol_vocab, pad_value=-1)
             self.test_context_tensor = self.test_context_tensor.to(loc)
 
+    def _sanity_check(self):
+        """Run before the training loop. Checks every rank; aborts on failure."""
+        rank = self.gpu_id
+        logger.info(f"Rank:{rank} [sanity] starting pre-train checks")
+
+        # ── 1. Barrier connectivity ──────────────────────────────────────────
+        if dist.is_initialized():
+            dist.barrier()
+            logger.info(f"Rank:{rank} [sanity] PASS barrier connectivity")
+
+        # ── 2. Pull one batch from the train loader ───────────────────────────
+        try:
+            dic = next(iter(self.train_loader))
+        except Exception as e:
+            raise RuntimeError(f"Rank:{rank} [sanity] FAIL dataloader: {e}") from e
+        logger.info(f"Rank:{rank} [sanity] PASS dataloader (batch keys: {list(dic.keys())})")
+
+        # ── 3. Tensor shapes & dtypes ────────────────────────────────────────
+        audio_feat      = dic['audio_feat'].to(rank)
+        asr_target      = dic['asr_target'].to(rank)
+        feats_lengths   = dic['audio_feat_length'].to(rank)
+        target_lengths  = dic['asr_target_length'].to(rank)
+        context_tensor  = dic['context_tensor'].to(rank)
+        att_tgt         = dic['att_tgt'].to(rank)
+
+        assert audio_feat.ndim == 3,      f"Rank:{rank} audio_feat expected 3-D, got {audio_feat.shape}"
+        assert context_tensor.ndim == 2,  f"Rank:{rank} context_tensor expected 2-D, got {context_tensor.shape}"
+        assert feats_lengths.shape[0] == audio_feat.shape[0], \
+            f"Rank:{rank} feats_lengths batch mismatch"
+        logger.info(f"Rank:{rank} [sanity] PASS tensor shapes  "
+                    f"audio={tuple(audio_feat.shape)}  ctx={tuple(context_tensor.shape)}")
+
+        # ── 4. Forward pass — loss must be finite ────────────────────────────
+        self.model.train()
+        self.optimizer.zero_grad()
+        try:
+            context = self.model.module.concoder(context_tensor)
+            loss, loss_att, loss_ctc, loss_copy = self.model(
+                audio_feat, feats_lengths, asr_target, target_lengths,
+                context=context, att_tgt=att_tgt)
+        except Exception as e:
+            raise RuntimeError(f"Rank:{rank} [sanity] FAIL forward pass: {e}") from e
+
+        if not torch.isfinite(loss):
+            raise RuntimeError(
+                f"Rank:{rank} [sanity] FAIL forward: loss is {loss.item():.4f} (NaN/Inf)")
+        logger.info(f"Rank:{rank} [sanity] PASS forward  loss={loss.item():.4f}  "
+                    f"loss_att={loss_att.item() if loss_att is not None else 'N/A'}  "
+                    f"loss_ctc={loss_ctc.item() if loss_ctc is not None else 'N/A'}  "
+                    f"loss_copy={loss_copy.item() if loss_copy is not None else 'N/A'}")
+
+        # ── 5. Backward pass — grads must exist and be finite ────────────────
+        try:
+            (loss / self.accum_grad).backward()
+        except Exception as e:
+            raise RuntimeError(f"Rank:{rank} [sanity] FAIL backward: {e}") from e
+
+        bad_grads = []
+        for name, p in self.model.named_parameters():
+            if p.requires_grad:
+                if p.grad is None:
+                    bad_grads.append(f"{name}:None")
+                elif not torch.isfinite(p.grad).all():
+                    bad_grads.append(f"{name}:NaN/Inf")
+        if bad_grads:
+            raise RuntimeError(
+                f"Rank:{rank} [sanity] FAIL backward: bad grads on {bad_grads[:5]}")
+        logger.info(f"Rank:{rank} [sanity] PASS backward (all grads finite)")
+
+        # ── 6. DDP gradient sync — verify ranks agree on grad norm ──────────
+        if dist.is_initialized():
+            # Collect local total grad norm into a tensor, allreduce to confirm
+            # all ranks participated (would hang/timeout if sync is broken).
+            local_gnorm = torch.tensor(
+                sum(p.grad.norm().item() ** 2 for p in self.model.parameters()
+                    if p.grad is not None) ** 0.5,
+                device=rank)
+            dist.all_reduce(local_gnorm, op=dist.ReduceOp.MAX)
+            logger.info(f"Rank:{rank} [sanity] PASS DDP allreduce  "
+                        f"max_gnorm_across_ranks={local_gnorm.item():.4f}")
+
+        # ── 7. Optimizer step ────────────────────────────────────────────────
+        try:
+            nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
+            self.optimizer.step()
+            self.scheduler.step()
+        except Exception as e:
+            raise RuntimeError(f"Rank:{rank} [sanity] FAIL optimizer step: {e}") from e
+        logger.info(f"Rank:{rank} [sanity] PASS optimizer step")
+
+        # ── Reset state ──────────────────────────────────────────────────────
+        self.optimizer.zero_grad()
+        if dist.is_initialized():
+            dist.barrier()   # all ranks finish checks together before training
+        logger.info(f"Rank:{rank} [sanity] all checks passed — starting training loop\n")
+
     def train(self):
         if self.gpu_id == 0:
             # TODO: 这里我把dev的context也像train那样搞
@@ -1401,6 +1498,8 @@ class CopyNEASRParser(object):
                                     num_workers=self.args.num_workers
                                     )
             logger.info(f"\n dev:{len(dev_set):6}\n")
+
+        self._sanity_check()
 
         elapsed = timedelta()
         train_start = datetime.now()
@@ -1454,6 +1553,12 @@ class CopyNEASRParser(object):
                     log_str += 'lr {:.8f}'.format(lr)
                     logger.info(f"Rank:{self.gpu_id} {log_str}")
             logger.info(f'Rank:{self.gpu_id} average train loss: {(sum_loss/i):.6f}\n')
+
+            # All ranks must sync here; rank 0 is about to do dev eval (no collectives
+            # on other ranks), so without this barrier non-zero ranks race into the next
+            # epoch's training collectives while rank 0 is still in loss_on_dev → NCCL timeout.
+            if dist.is_initialized():
+                dist.barrier()
 
             if self.gpu_id == 0:
                 # evaluate on dev dataset
@@ -1511,7 +1616,12 @@ class CopyNEASRParser(object):
                         'nbest_loss_lst': self.nbest_loss_lst,
                         'nbest_epoch_lst': self.nbest_epoch_lst,
                         }, self.curr_model_path)
-            
+
+            # Second barrier: hold non-zero ranks until rank 0 finishes saving,
+            # so they don't start the next epoch while rank 0 is still in I/O.
+            if dist.is_initialized():
+                dist.barrier()
+
             torch.cuda.empty_cache()
 
             if getattr(self.args, 'max_hours', None) is not None:
