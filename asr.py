@@ -1373,7 +1373,7 @@ class CopyNEASRParser(object):
             self.load_model(path)
 
         
-        self.model = DDP(self.model, device_ids=[self.gpu_id], find_unused_parameters=True)
+        self.model = DDP(self.model, device_ids=[self.gpu_id], find_unused_parameters=True, broadcast_buffers=False)
 
     def load_model(self, model_path):
         assert model_path != 'None'
@@ -1391,21 +1391,29 @@ class CopyNEASRParser(object):
             self.test_context_tensor = self.test_context_tensor.to(loc)
 
     def _sanity_check(self):
-        """Run before the training loop. Checks every rank; aborts on failure."""
+        """Run before training loop. Checks every rank; aborts on failure."""
         rank = self.gpu_id
         logger.info(f"Rank:{rank} [sanity] starting pre-train checks")
 
-        # ── 1. Barrier connectivity ──────────────────────────────────────────
+        # ── 1. Barrier connectivity & DDP config ────────────────────────────
         if dist.is_initialized():
             dist.barrier()
             logger.info(f"Rank:{rank} [sanity] PASS barrier connectivity")
+            is_bc_buffers = getattr(self.model, 'broadcast_buffers', False)
+            if is_bc_buffers:
+                raise RuntimeError(
+                    f"Rank:{rank} [sanity] FAIL: broadcast_buffers is True; set broadcast_buffers=False in DDP to avoid NCCL timeouts")
+            logger.info(f"Rank:{rank} [sanity] PASS DDP broadcast_buffers=False verified")
 
-        # ── 2. Pull one batch from the train loader ───────────────────────────
+        # ── 2. Pull multiple batches from train loader ───────────────────────
         try:
-            dic = next(iter(self.train_loader))
+            it = iter(self.train_loader)
+            dic = next(it)
+            _ = next(it)
+            del it
         except Exception as e:
-            raise RuntimeError(f"Rank:{rank} [sanity] FAIL dataloader: {e}") from e
-        logger.info(f"Rank:{rank} [sanity] PASS dataloader (batch keys: {list(dic.keys())})")
+            raise RuntimeError(f"Rank:{rank} [sanity] FAIL dataloader multi-batch test: {e}") from e
+        logger.info(f"Rank:{rank} [sanity] PASS dataloader multi-batch test (batch keys: {list(dic.keys())})")
 
         # ── 3. Tensor shapes & dtypes ────────────────────────────────────────
         audio_feat      = dic['audio_feat'].to(rank)
@@ -1419,29 +1427,40 @@ class CopyNEASRParser(object):
         assert context_tensor.ndim == 2,  f"Rank:{rank} context_tensor expected 2-D, got {context_tensor.shape}"
         assert feats_lengths.shape[0] == audio_feat.shape[0], \
             f"Rank:{rank} feats_lengths batch mismatch"
-        logger.info(f"Rank:{rank} [sanity] PASS tensor shapes  "
-                    f"audio={tuple(audio_feat.shape)}  ctx={tuple(context_tensor.shape)}")
+        logger.info(f"Rank:{rank} [sanity] PASS tensor shapes "
+                    f"audio={tuple(audio_feat.shape)} ctx={tuple(context_tensor.shape)}")
 
-        # ── 4. Forward pass — loss must be finite ────────────────────────────
+        # ── 4. Save state for restoration ────────────────────────────────────
+        saved_model_state = copy.deepcopy(self.model.module.state_dict())
+        saved_opt_state = copy.deepcopy(self.optimizer.state_dict())
+        saved_sched_state = copy.deepcopy(self.scheduler.state_dict())
+
+        # ── 5. Forward pass — loss must be finite ────────────────────────────
         self.model.train()
         self.optimizer.zero_grad()
         try:
-            context = self.model.module.concoder(context_tensor)
             loss, loss_att, loss_ctc, loss_copy = self.model(
                 audio_feat, feats_lengths, asr_target, target_lengths,
-                context=context, att_tgt=att_tgt)
+                context_tensor=context_tensor, att_tgt=att_tgt)
         except Exception as e:
             raise RuntimeError(f"Rank:{rank} [sanity] FAIL forward pass: {e}") from e
 
         if not torch.isfinite(loss):
             raise RuntimeError(
                 f"Rank:{rank} [sanity] FAIL forward: loss is {loss.item():.4f} (NaN/Inf)")
+
+        if dist.is_initialized():
+            loss_tensor = torch.tensor([loss.item()], device=rank)
+            dist.all_reduce(loss_tensor, op=dist.ReduceOp.SUM)
+            avg_loss = loss_tensor.item() / dist.get_world_size()
+            logger.info(f"Rank:{rank} [sanity] PASS cross-rank loss sync: avg={avg_loss:.4f}")
+
         logger.info(f"Rank:{rank} [sanity] PASS forward  loss={loss.item():.4f}  "
                     f"loss_att={loss_att.item() if loss_att is not None else 'N/A'}  "
                     f"loss_ctc={loss_ctc.item() if loss_ctc is not None else 'N/A'}  "
                     f"loss_copy={loss_copy.item() if loss_copy is not None else 'N/A'}")
 
-        # ── 5. Backward pass — grads must exist and be finite ────────────────
+        # ── 6. Backward pass — grads must exist and be finite ────────────────
         try:
             (loss / self.accum_grad).backward()
         except Exception as e:
@@ -1458,18 +1477,24 @@ class CopyNEASRParser(object):
         if nan_grads:
             raise RuntimeError(
                 f"Rank:{rank} [sanity] FAIL backward: NaN/Inf grads on {nan_grads[:5]}")
-        # None grads are expected when find_unused_parameters=True —
-        # those params simply weren't in this forward path.
+
+        # Verify concoder parameters received gradients
+        if hasattr(self.model.module, 'concoder'):
+            concoder_grads = [name for name, p in self.model.named_parameters()
+                              if 'concoder' in name and p.requires_grad and p.grad is not None]
+            if len(concoder_grads) == 0:
+                raise RuntimeError(
+                    f"Rank:{rank} [sanity] FAIL: concoder params received no gradients (DDP forward integration failed)")
+            logger.info(f"Rank:{rank} [sanity] PASS concoder gradients active ({len(concoder_grads)} params)")
+
         if none_grads:
             logger.info(f"Rank:{rank} [sanity] NOTE {len(none_grads)} params had None grad "
-                        f"(unused in this forward pass, expected with find_unused_parameters=True). "
+                        f"(unused in forward pass, expected with find_unused_parameters=True). "
                         f"First few: {none_grads[:3]}")
         logger.info(f"Rank:{rank} [sanity] PASS backward (no NaN/Inf grads)")
 
-        # ── 6. DDP gradient sync — verify ranks agree on grad norm ──────────
+        # ── 7. DDP gradient sync — verify ranks agree on grad norm ──────────
         if dist.is_initialized():
-            # Collect local total grad norm into a tensor, allreduce to confirm
-            # all ranks participated (would hang/timeout if sync is broken).
             local_gnorm = torch.tensor(
                 sum(p.grad.norm().item() ** 2 for p in self.model.parameters()
                     if p.grad is not None) ** 0.5,
@@ -1478,7 +1503,7 @@ class CopyNEASRParser(object):
             logger.info(f"Rank:{rank} [sanity] PASS DDP allreduce  "
                         f"max_gnorm_across_ranks={local_gnorm.item():.4f}")
 
-        # ── 7. Optimizer step ────────────────────────────────────────────────
+        # ── 8. Optimizer step ────────────────────────────────────────────────
         try:
             nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
             self.optimizer.step()
@@ -1487,11 +1512,17 @@ class CopyNEASRParser(object):
             raise RuntimeError(f"Rank:{rank} [sanity] FAIL optimizer step: {e}") from e
         logger.info(f"Rank:{rank} [sanity] PASS optimizer step")
 
-        # ── Reset state ──────────────────────────────────────────────────────
-        self.optimizer.zero_grad()
+        # ── 9. Restore clean state ───────────────────────────────────────────
+        self.model.module.load_state_dict(saved_model_state)
+        self.optimizer.load_state_dict(saved_opt_state)
+        self.scheduler.load_state_dict(saved_sched_state)
+        self.optimizer.zero_grad(set_to_none=True)
+        del saved_model_state, saved_opt_state, saved_sched_state
+        torch.cuda.empty_cache()
+
         if dist.is_initialized():
             dist.barrier()   # all ranks finish checks together before training
-        logger.info(f"Rank:{rank} [sanity] all checks passed — starting training loop\n")
+        logger.info(f"Rank:{rank} [sanity] all checks passed, model/optimizer state restored — ready to train\n")
 
     def train(self):
         if self.gpu_id == 0:
@@ -1533,10 +1564,8 @@ class CopyNEASRParser(object):
                 context_tensor = context_tensor.to(self.gpu_id)
                 att_tgt = att_tgt.to(self.gpu_id)
 
-                # here context_tensor do not contain 'none', cocoder should contain it, and append none at last
-                context = self.model.module.concoder(context_tensor)
                 loss, loss_att, loss_ctc, loss_copy = self.model(
-                            audio_feat, feats_lengths, asr_target, target_lengths, context=context, att_tgt=att_tgt)
+                            audio_feat, feats_lengths, asr_target, target_lengths, context_tensor=context_tensor, att_tgt=att_tgt)
                 sum_loss += loss.item()
                 loss = loss / self.accum_grad
                 loss.backward()
@@ -1661,10 +1690,8 @@ class CopyNEASRParser(object):
             target_lengths = target_lengths.to(self.gpu_id)
             context_tensor = context_tensor.to(self.gpu_id)
             # need_att_mask = need_att_mask.to(torch.device("cuda"))
-            att_tgt = att_tgt.to(self.gpu_id)
-            context = self.model.module.concoder(context_tensor)
             loss, loss_att, loss_ctc, loss_copy = self.model(
-                            audio_feat, feats_lengths, asr_target, target_lengths, context=context, att_tgt=att_tgt)
+                            audio_feat, feats_lengths, asr_target, target_lengths, context_tensor=context_tensor, att_tgt=att_tgt)
             sum_dev_loss += loss.item()
 
         logger.info(f'Rank:{self.gpu_id} average dev loss: {(sum_dev_loss/i):.6f}')
@@ -3047,7 +3074,7 @@ class nParaformerASRParser(object):
                 path = os.path.join(self.args.path, 'best.model')
             self.load_model(path)
             
-        self.model = DDP(self.model, device_ids=[self.gpu_id], find_unused_parameters=True)
+        self.model = DDP(self.model, device_ids=[self.gpu_id], find_unused_parameters=True, broadcast_buffers=False)
                 
     def load_model(self, model_path):
         assert model_path != 'None'

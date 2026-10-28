@@ -104,6 +104,7 @@ class ASRModel(torch.nn.Module):
         context=None,
         need_att_mask=None,
         att_tgt=None,
+        context_tensor=None,
     ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor],
                Optional[torch.Tensor]]:
         """Frontend + Encoder + Decoder + Calc loss
@@ -114,6 +115,8 @@ class ASRModel(torch.nn.Module):
             text: (Batch, Length)
             text_lengths: (Batch,)
         """
+        if context is None and context_tensor is not None and hasattr(self, 'concoder'):
+            context = self.concoder(context_tensor)
         assert text_lengths.dim() == 1, text_lengths.shape
         # Check that batch_size is unified
         assert (speech.shape[0] == speech_lengths.shape[0] == text.shape[0] ==

@@ -2,12 +2,13 @@ import argparse
 import os
 import torch
 from asr import CTCAttentionASRParser, CLASCTCAttentionASRParser, CopyNEASRParser
+from datetime import timedelta
 from supar.utils.logging import init_logger, logger
 from torch.distributed import init_process_group, destroy_process_group
 
 def ddp_setup():
     if "LOCAL_RANK" in os.environ:
-        init_process_group(backend="nccl")
+        init_process_group(backend="nccl", timeout=timedelta(minutes=30))
         torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
 
 def main():

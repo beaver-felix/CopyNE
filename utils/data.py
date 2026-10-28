@@ -852,7 +852,9 @@ def copyne_collate_fn(batch):
         sample_num = int(torch.rand(1).item() * batch_size + batch_size * (max_bei-1))
         if len(batch_ne_set) < sample_num:
             # sample nes from the training_ne_vocab
-            while len(batch_ne_set) < sample_num:
+            attempts = 0
+            while len(batch_ne_set) < sample_num and attempts < 1000:
+                attempts += 1
                 sample_idx = torch.randint(0, len(ne_vocab), (1, )).item()
                 if len(ne_vocab[sample_idx]) > 1:
                     batch_ne_set.add(ne_vocab[sample_idx])
