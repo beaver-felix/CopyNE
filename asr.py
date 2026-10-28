@@ -1447,17 +1447,24 @@ class CopyNEASRParser(object):
         except Exception as e:
             raise RuntimeError(f"Rank:{rank} [sanity] FAIL backward: {e}") from e
 
-        bad_grads = []
+        nan_grads = []
+        none_grads = []
         for name, p in self.model.named_parameters():
             if p.requires_grad:
                 if p.grad is None:
-                    bad_grads.append(f"{name}:None")
+                    none_grads.append(name)
                 elif not torch.isfinite(p.grad).all():
-                    bad_grads.append(f"{name}:NaN/Inf")
-        if bad_grads:
+                    nan_grads.append(name)
+        if nan_grads:
             raise RuntimeError(
-                f"Rank:{rank} [sanity] FAIL backward: bad grads on {bad_grads[:5]}")
-        logger.info(f"Rank:{rank} [sanity] PASS backward (all grads finite)")
+                f"Rank:{rank} [sanity] FAIL backward: NaN/Inf grads on {nan_grads[:5]}")
+        # None grads are expected when find_unused_parameters=True —
+        # those params simply weren't in this forward path.
+        if none_grads:
+            logger.info(f"Rank:{rank} [sanity] NOTE {len(none_grads)} params had None grad "
+                        f"(unused in this forward pass, expected with find_unused_parameters=True). "
+                        f"First few: {none_grads[:3]}")
+        logger.info(f"Rank:{rank} [sanity] PASS backward (no NaN/Inf grads)")
 
         # ── 6. DDP gradient sync — verify ranks agree on grad norm ──────────
         if dist.is_initialized():
