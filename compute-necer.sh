@@ -5,6 +5,17 @@
 gold=$1
 pred=$2
 
+filename=$(basename "$gold")
+extension="${filename##*.}"
+path=${gold%"$filename"}
+path_without_extension="$path${filename%.$extension}"
+
+# auto-generate gold text if missing
+if [ ! -f "$gold" ] && [ -f "$path_without_extension.json" ]; then
+    echo "Gold file $gold missing. Generating from $path_without_extension.json..."
+    uv run python scripts/json_to_text.py "$path_without_extension.json" "$gold"
+fi
+
 # first compute cer
 uv run python tools/compute-wer.py --char=1 --v=1 --padding-symbol=underline \
         $gold $pred > $pred.cer
@@ -19,10 +30,6 @@ head -n -7 $pred.cer > temp.txt
 # echo "Last 7 lines deleted"
 
 # generate ne-gold and ne-pred
-filename=$(basename "$gold")
-extension="${filename##*.}"
-path=${gold%"$filename"}
-path_without_extension="$path${filename%.$extension}"
 # echo "$path_without_extension"
 uv run python build_file_for_ne_cer.py $path_without_extension.json temp.txt
 rm temp.txt

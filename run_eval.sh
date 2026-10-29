@@ -32,6 +32,11 @@ RESULT_MD="RESULT.md"
 
 mkdir -p "$RESULTS_DIR"
 
+# Ensure gold text reference exists
+if [[ ! -f "$GOLD_TEXT" ]]; then
+    uv run python scripts/json_to_text.py "$INPUT" "$GOLD_TEXT"
+fi
+
 # ── model configs ─────────────────────────────────────────────────────────────
 # Each entry: "label:relative_model_file"
 # For "best"    → path = EXP_DIR (loads best.model directly)
