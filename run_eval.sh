@@ -56,7 +56,7 @@ DECODE_MODES=("copy_attention" "attention" "ctc_greedy_search")
 extract_metric() {
     # grab the value after "Overall" in a compute-wer output file
     local file="$1"
-    grep -E "^Overall" "$file" 2>/dev/null | awk '{print $NF}' | head -1
+    grep -E "^Overall" "$file" 2>/dev/null | awk '{print $3}' | head -1
 }
 
 # ── write RESULT.md header ────────────────────────────────────────────────────
