@@ -49,26 +49,53 @@ uv run python scripts/verify_qwen3_hook.py
 
 ## 4. Training on Kaggle 2x T4 GPUs
 
-### Row 3: Proposed Model (L2R CopyNE Only, `alpha_r2l = 0.0`)
+### Row 2: Baseline Original CopyNE (Zipformer CTC/Attn from scratch)
+```bash
+uv run torchrun --standalone --nnodes=1 --nproc_per_node=2 --master_port=29501 train.py \
+    --train data_to_upload/aishell_dataset/train_addne.json \
+    --dev data_to_upload/aishell_dataset/dev_addne.json \
+    --test data_to_upload/aishell_dataset/test_addne.json \
+    --add_context \
+    --pad_context 2 \
+    --att_type simpleatt \
+    --add_copy_loss \
+    --train_ne_dict data_to_upload/aishell_vocab/train_ne.vocab \
+    --dev_ne_dict data_to_upload/aishell_vocab/dev_ne.vocab \
+    --path exp/copyne_aishell_beta1/ \
+    --batch_size 16 \
+    --seed 777 \
+    --config conf/copyne.yaml \
+    --char_dict data_to_upload/aishell_vocab/char.vocab \
+    --cmvn data_to_upload/aishell1_global_cmvn_mel80 \
+    --num_workers 2 \
+    --max_hours 11.0
+```
+
+### Row 3: Proposed Model (Frozen Qwen3 + L2R CopyNE, `alpha_r2l = 0.0`)
 ```bash
 uv run torchrun --standalone --nnodes=1 --nproc_per_node=2 train_qwen_copyne.py \
     --config conf/qwen3_copyne_u2pp.yaml \
+    --train data_to_upload/aishell_dataset/train_addne.json \
+    --dev data_to_upload/aishell_dataset/dev_addne.json \
     --path exp/qwen3_copyne_l2r \
     --alpha_r2l 0.0 \
     --max_hours 11.0
 ```
 
-### Row 4: Proposed Model (Full L2R + U2++ R2L Rescoring, `alpha_r2l = 0.3`)
+### Row 4: Proposed Model (Frozen Qwen3 + Full U2++ R2L Rescoring, `alpha_r2l = 0.3`)
 ```bash
 uv run torchrun --standalone --nnodes=1 --nproc_per_node=2 train_qwen_copyne.py \
     --config conf/qwen3_copyne_u2pp.yaml \
+    --train data_to_upload/aishell_dataset/train_addne.json \
+    --dev data_to_upload/aishell_dataset/dev_addne.json \
     --path exp/qwen3_copyne_u2pp \
     --alpha_r2l 0.3 \
-    --max_hours 11.0
+    --max_hours 11.0 \
+    --pre_model exp/qwen3_copyne_l2r/checkpoint_best.pt
 ```
 
 > **Resume across Kaggle 12-hour session limits**:
-> Add `--pre_model exp/qwen3_copyne_u2pp/current.model` to command.
+> Add `--pre_model <output_dir>/checkpoint_session_timeout.pt` (or `current.model` for Row 2 baseline).
 
 ---
 

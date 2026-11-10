@@ -77,9 +77,9 @@ def parse_args():
         allow_abbrev=False,
     )
     parser.add_argument("--config", type=str, default="conf/qwen3_copyne_u2pp.yaml", help="Path to YAML config")
-    parser.add_argument("--train_data", type=str, required=True, help="Path to train JSONL with entities")
-    parser.add_argument("--dev_data", type=str, required=True, help="Path to dev JSONL with entities")
-    parser.add_argument("--output_dir", type=str, default="exp/qwen3_copyne", help="Directory to save checkpoints")
+    parser.add_argument("--train_data", "--train", type=str, required=True, help="Path to train JSONL with entities")
+    parser.add_argument("--dev_data", "--dev", type=str, required=True, help="Path to dev JSONL with entities")
+    parser.add_argument("--output_dir", "--path", type=str, default="exp/qwen3_copyne", help="Directory to save checkpoints")
     parser.add_argument("--pre_model", type=str, default=None, help="Path to initial checkpoint to resume or warm-start")
     parser.add_argument("--alpha_r2l", type=float, default=None, help="R2L loss weight override (0.0 for L2R only, 0.3 for U2++)")
     parser.add_argument("--alpha_copy", type=float, default=None, help="Copy loss weight override")

@@ -89,9 +89,9 @@ def parse_args():
         allow_abbrev=False,
     )
     parser.add_argument("--config", type=str, default="conf/qwen3_copyne_u2pp.yaml", help="Path to config YAML")
-    parser.add_argument("--model_path", type=str, default=None, help="Path to trained checkpoint (.pt)")
+    parser.add_argument("--model_path", "--path", type=str, default=None, help="Path to trained checkpoint (.pt) or directory")
     parser.add_argument("--qwen_model_id", type=str, default=None, help="Hugging Face model ID for Qwen3 backbone")
-    parser.add_argument("--test_data", type=str, required=True, help="Path to test JSONL file")
+    parser.add_argument("--test_data", "--test", "--input", type=str, default="data_to_upload/aishell_dataset/test-ne.json", help="Path to test JSONL file")
     parser.add_argument("--test_ne_dict", type=str, default=None, help="Optional external entity vocabulary file")
     parser.add_argument(
         "--mode",
@@ -166,15 +166,24 @@ def main():
         ).to(device)
         copyne_model.eval()
 
-        if args.model_path and os.path.exists(args.model_path):
-            logger.info(f"Loading checkpoint weights from: {args.model_path}")
+        ckpt_path = args.model_path
+        if ckpt_path and os.path.isdir(ckpt_path):
+            candidate_best = os.path.join(ckpt_path, "checkpoint_best.pt")
+            candidate_last = os.path.join(ckpt_path, "checkpoint_last.pt")
+            if os.path.exists(candidate_best):
+                ckpt_path = candidate_best
+            elif os.path.exists(candidate_last):
+                ckpt_path = candidate_last
+
+        if ckpt_path and os.path.exists(ckpt_path):
+            logger.info(f"Loading checkpoint weights from: {ckpt_path}")
             try:
-                ckpt = torch.load(args.model_path, map_location=device)
+                ckpt = torch.load(ckpt_path, map_location=device)
                 state_dict = ckpt["model_state_dict"] if "model_state_dict" in ckpt else ckpt
                 copyne_model.load_trainable_state_dict(state_dict, strict=False)
                 logger.info("Checkpoint weights loaded successfully.")
             except Exception as e:
-                logger.error(f"Failed loading checkpoint from {args.model_path}: {e}")
+                logger.error(f"Failed loading checkpoint from {ckpt_path}: {e}")
                 raise
         else:
             logger.warning(f"No checkpoint provided via --model_path. Evaluating with initialized modules!")
