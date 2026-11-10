@@ -1,6 +1,6 @@
 import os
 import random
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 import orjson
 import torch
 import torchaudio as ta
@@ -17,11 +17,33 @@ def load_jsonl_orjson(path: str) -> List[dict]:
     return records
 
 
-def load_ne_vocab_orjson(path: str) -> List[str]:
-    with open(path, "rb") as f:
-        vocab_dict = orjson.loads(f.read())
-    itos = {int(v): k for k, v in vocab_dict.items()}
-    return [itos[i] for i in range(len(itos))]
+def load_ne_vocab_orjson(path: Optional[str]) -> List[str]:
+    if not path or not os.path.exists(path):
+        return []
+    try:
+        with open(path, "rb") as f:
+            content = f.read()
+    except Exception as e:
+        print(f"[Warning] Failed to read ne vocab file {path}: {e}")
+        return []
+
+    try:
+        vocab_data = orjson.loads(content)
+        if isinstance(vocab_data, dict):
+            itos = {int(v): k for k, v in vocab_data.items() if str(v).isdigit()}
+            if itos:
+                return [itos[i] for i in range(len(itos)) if i in itos]
+            return list(vocab_data.keys())
+        elif isinstance(vocab_data, list):
+            return [str(x).strip() for x in vocab_data if str(x).strip()]
+    except Exception as _e_json:
+        lines = []
+        for line in content.decode("utf-8", errors="ignore").splitlines():
+            line_str = line.strip()
+            if line_str:
+                lines.append(line_str)
+        return lines
+    return []
 
 
 def tokenize_entity_variants(tokenizer, ne_str: str) -> Tuple[List[int], List[List[int]]]:
@@ -101,17 +123,23 @@ class QwenCopyNEDataset(torch.utils.data.Dataset):
     def __init__(
         self,
         json_file: str,
-        ne_dict_file: str,
+        ne_dict_file: Optional[str] = None,
         is_training: bool = True,
         beta_distractors: int = 2,
         language: str = "Chinese",
+        max_audio_secs: float = 30.0,
+        processor=None,
+        **kwargs,
     ):
         super().__init__()
+        self.json_file = json_file
         self.records = load_jsonl_orjson(json_file)
-        self.ne_vocab = load_ne_vocab_orjson(ne_dict_file) if (ne_dict_file and os.path.exists(ne_dict_file)) else []
+        self.ne_vocab = load_ne_vocab_orjson(ne_dict_file) if ne_dict_file else []
         self.is_training = is_training
         self.beta_distractors = beta_distractors
         self.language = language
+        self.max_audio_secs = max_audio_secs
+        self.processor = processor
 
     def __len__(self) -> int:
         return len(self.records)
@@ -119,17 +147,42 @@ class QwenCopyNEDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx: int) -> dict:
         rec = self.records[idx]
         wav_path = rec["wav"]
+        if not os.path.exists(wav_path):
+            cand = os.path.join(os.path.dirname(self.json_file), wav_path)
+            if os.path.exists(cand):
+                wav_path = cand
+            else:
+                for prefix in ["data_to_upload/", "data/"]:
+                    if wav_path.startswith(prefix):
+                        cand2 = wav_path[len(prefix):]
+                        if os.path.exists(cand2):
+                            wav_path = cand2
+                            break
+
         waveform, sr = ta.load(wav_path)
+        if waveform.shape[0] > 1:
+            waveform = torch.mean(waveform, dim=0, keepdim=True)
         if sr != 16000:
             waveform = ta.transforms.Resample(sr, 16000)(waveform)
             sr = 16000
         audio_np = waveform[0].numpy()
-        sentence = rec["txt"]
-        ne_set = {
-            sentence[st : ed + 1]
-            for _, st, ed in rec.get("ne_lst", [])
-            if ed > st and len(sentence[st : ed + 1].strip()) > 0
-        }
+        if self.max_audio_secs is not None and self.max_audio_secs > 0:
+            max_samples = int(self.max_audio_secs * sr)
+            if len(audio_np) > max_samples:
+                audio_np = audio_np[:max_samples]
+
+        sentence = rec.get("txt", "")
+        ne_set = set()
+        if "entities" in rec and isinstance(rec["entities"], (list, tuple, set)):
+            ne_set.update(str(e).strip() for e in rec["entities"] if str(e).strip())
+        for item in rec.get("ne_lst", []):
+            if len(item) == 3:
+                _, st, ed = item
+                if ed >= st:
+                    cand = sentence[st : ed + 1].strip()
+                    if cand:
+                        ne_set.add(cand)
+
         return {
             "key": rec["key"],
             "audio_np": audio_np,
@@ -144,19 +197,20 @@ class QwenCopyNECollator:
     def __init__(
         self,
         processor,
-        ne_vocab: List[str],
+        ne_vocab: Optional[List[str]] = None,
         is_training: bool = True,
         is_dev: bool = False,
         beta_distractors: int = 2,
+        **kwargs,
     ):
         self.processor = processor
         self.tokenizer = processor.tokenizer
-        self.ne_vocab = ne_vocab
+        self.ne_vocab = ne_vocab or []
         self.is_training = is_training
         self.is_dev = is_dev
         self.beta_distractors = beta_distractors
         self.asr_text_id = self.tokenizer.convert_tokens_to_ids("<asr_text>")
-        self.pad_token_id = self.tokenizer.pad_token_id
+        self.pad_token_id = self.tokenizer.pad_token_id or self.tokenizer.eos_token_id
 
     def _sample_batch_entities(self, batch: List[dict]) -> List[str]:
         if not self.is_training and not self.is_dev:

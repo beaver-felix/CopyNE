@@ -38,6 +38,8 @@ precision:
   audio_clamp_value: 65504.0
 
 data:
+  train_ne_dict: "data_to_upload/aishell_vocab/train_ne.vocab"
+  dev_ne_dict: "data_to_upload/aishell_vocab/dev_ne.vocab"
   max_audio_length_secs: 30.0
   max_text_tokens: 256
   max_entity_tokens: 32

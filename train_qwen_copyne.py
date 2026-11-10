@@ -81,6 +81,8 @@ def parse_args():
     parser.add_argument("--dev_data", "--dev", type=str, required=True, help="Path to dev JSONL with entities")
     parser.add_argument("--output_dir", "--path", type=str, default="exp/qwen3_copyne", help="Directory to save checkpoints")
     parser.add_argument("--pre_model", type=str, default=None, help="Path to initial checkpoint to resume or warm-start")
+    parser.add_argument("--train_ne_dict", type=str, default=None, help="Optional external train entity vocabulary file")
+    parser.add_argument("--dev_ne_dict", type=str, default=None, help="Optional external dev entity vocabulary file")
     parser.add_argument("--alpha_r2l", type=float, default=None, help="R2L loss weight override (0.0 for L2R only, 0.3 for U2++)")
     parser.add_argument("--alpha_copy", type=float, default=None, help="Copy loss weight override")
     parser.add_argument("--batch_size", type=int, default=None, help="Per-device batch size override")
@@ -295,13 +297,29 @@ def main():
 
     # 5. Datasets and DataLoaders
     max_audio_secs = config["data"].get("max_audio_length_secs", 30.0)
-    train_dataset = QwenCopyNEDataset(args.train_data, processor=processor, max_audio_secs=max_audio_secs)
-    dev_dataset = QwenCopyNEDataset(args.dev_data, processor=processor, max_audio_secs=max_audio_secs)
+    train_ne_dict = args.train_ne_dict or config.get("data", {}).get("train_ne_dict", None)
+    dev_ne_dict = args.dev_ne_dict or config.get("data", {}).get("dev_ne_dict", None)
+
+    train_dataset = QwenCopyNEDataset(
+        json_file=args.train_data,
+        ne_dict_file=train_ne_dict,
+        is_training=True,
+        processor=processor,
+        max_audio_secs=max_audio_secs,
+    )
+    dev_dataset = QwenCopyNEDataset(
+        json_file=args.dev_data,
+        ne_dict_file=dev_ne_dict,
+        is_training=False,
+        processor=processor,
+        max_audio_secs=max_audio_secs,
+    )
 
     train_sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank, shuffle=True) if world_size > 1 else None
     dev_sampler = DistributedSampler(dev_dataset, num_replicas=world_size, rank=rank, shuffle=False) if world_size > 1 else None
 
-    collator = QwenCopyNECollator(processor=processor)
+    train_collator = QwenCopyNECollator(processor=processor, ne_vocab=train_dataset.ne_vocab, is_training=True)
+    dev_collator = QwenCopyNECollator(processor=processor, ne_vocab=dev_dataset.ne_vocab, is_training=False, is_dev=True)
 
     train_loader = DataLoader(
         train_dataset,
@@ -309,7 +327,7 @@ def main():
         sampler=train_sampler,
         shuffle=(train_sampler is None),
         num_workers=args.num_workers,
-        collate_fn=collator,
+        collate_fn=train_collator,
         pin_memory=True,
         drop_last=True,
     )
@@ -319,7 +337,7 @@ def main():
         sampler=dev_sampler,
         shuffle=False,
         num_workers=args.num_workers,
-        collate_fn=collator,
+        collate_fn=dev_collator,
         pin_memory=True,
         drop_last=False,
     )
