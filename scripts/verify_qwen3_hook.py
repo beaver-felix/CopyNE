@@ -2,7 +2,23 @@ import os
 import torch
 import torch.nn.functional as F
 import torchaudio as ta
-from transformers import AutoProcessor, Qwen3ASRForConditionalGeneration
+
+# Disable torchvision in transformers to bypass broken Kaggle C++ ABI (torchvision::nms missing)
+try:
+    import transformers.utils.import_utils as _tr_import_utils
+    _tr_import_utils.is_torchvision_available = lambda: False
+    _tr_import_utils.is_torchvision_v2_available = lambda: False
+except Exception as _e:
+    print(f"[Warning] Failed to patch transformers torchvision flag: {_e}")
+
+try:
+    from transformers.models.qwen3_asr import (
+        Qwen3ASRProcessor as AutoProcessor,
+        Qwen3ASRForConditionalGeneration,
+    )
+except Exception as _e:
+    print(f"[Info] Fallback to generic AutoProcessor: {_e}")
+    from transformers import AutoProcessor, Qwen3ASRForConditionalGeneration
 
 
 def get_optimal_backbone_dtype() -> torch.dtype:

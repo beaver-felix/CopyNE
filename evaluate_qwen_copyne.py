@@ -130,8 +130,24 @@ def main():
 
     # Load Processor and Qwen3 Backbone
     logger.info(f"Loading processor and backbone from: {qwen_model_id}")
+    # Disable broken torchvision in transformers to bypass Kaggle C++ operator mismatch (torchvision::nms missing)
     try:
-        from transformers import AutoModelForCausalLM, AutoProcessor
+        import transformers.utils.import_utils as _tr_import_utils
+        _tr_import_utils.is_torchvision_available = lambda: False
+        _tr_import_utils.is_torchvision_v2_available = lambda: False
+    except Exception as _tr_err:
+        logger.warning(f"Could not patch transformers torchvision availability flag: {_tr_err}")
+
+    try:
+        try:
+            from transformers.models.qwen3_asr import (
+                Qwen3ASRProcessor as AutoProcessor,
+                Qwen3ASRForConditionalGeneration as AutoModelForCausalLM,
+            )
+        except Exception as _dir_err:
+            logger.info(f"Direct Qwen3ASR import fallback to generic AutoProcessor: {_dir_err}")
+            from transformers import AutoModelForCausalLM, AutoProcessor
+
         processor = AutoProcessor.from_pretrained(qwen_model_id, fix_markdown=False)
         qwen_backbone = AutoModelForCausalLM.from_pretrained(
             qwen_model_id,

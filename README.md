@@ -15,7 +15,9 @@ In Kaggle notebook cell:
 
 # 2. Install uv and dependencies
 !pip install uv
-!uv pip install --system torch==2.14.1 torchaudio==2.11.1 "transformers>=5.13.0" orjson polars pyyaml
+!uv pip install --system "transformers>=5.13.0" orjson polars pyyaml
+# Remove conflicting torchvision (unused in audio ASR; fixes Kaggle operator torchvision::nms crash)
+!pip uninstall -y torchvision
 ```
 
 ---
