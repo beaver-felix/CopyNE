@@ -1,5 +1,6 @@
 
 import os
+import time
 import yaml
 import copy
 import torch
@@ -1280,6 +1281,11 @@ class CopyNEASRParser(object):
         self.lr = configs["optim_conf"]["lr"]
         self.warm_steps = configs["scheduler_conf"]["warmup_steps"]
         self.configs = configs
+        raw_max_hours = getattr(args, "max_hours", None)
+        if raw_max_hours is None:
+            raw_max_hours = configs.get("max_hours", None)
+        self.max_hours = float(raw_max_hours) if raw_max_hours is not None else None
+        self.train_start_monotonic = getattr(args, "train_start_monotonic", time.monotonic())
 
         self.model = init_asr_model(configs)
         self.gpu_id = int(os.environ["LOCAL_RANK"])
@@ -1540,7 +1546,9 @@ class CopyNEASRParser(object):
         self._sanity_check()
 
         elapsed = timedelta()
-        train_start = datetime.now()
+        time_limit_reached = False
+        if self.gpu_id == 0:
+            logger.info(f"Rank:{self.gpu_id} max_hours limit: {self.max_hours}")
         for epoch in range(self.start_epoch, self.epochs + 1):
             self.model.train()
             self.train_loader.sampler.set_epoch(epoch)
@@ -1575,6 +1583,21 @@ class CopyNEASRParser(object):
                     self.scheduler.step()
                     self.optimizer.zero_grad()
 
+                    if self.max_hours is not None and self.max_hours > 0:
+                        hours_elapsed = (time.monotonic() - self.train_start_monotonic) / 3600.0
+                        stop_flag = 1 if hours_elapsed >= self.max_hours else 0
+                        if dist.is_initialized():
+                            flag_tensor = torch.tensor([stop_flag], dtype=torch.int32, device=self.gpu_id)
+                            dist.broadcast(flag_tensor, src=0)
+                            stop_flag = int(flag_tensor.item())
+                        if stop_flag == 1:
+                            logger.info(
+                                f"Rank:{self.gpu_id} max_hours={self.max_hours:.2f}h reached mid-epoch {epoch} "
+                                f"at batch {i} ({hours_elapsed:.2f}h elapsed). Stopping to save checkpoint.\n"
+                            )
+                            time_limit_reached = True
+                            break
+
                 if i % self.log_interval == 0:
                     lr = self.optimizer.param_groups[0]['lr']
                     log_str = 'TRAIN Batch {}/{} loss {:.6f} '.format(
@@ -1588,7 +1611,7 @@ class CopyNEASRParser(object):
                         log_str += 'loss_copy {:.6f} '.format(loss_copy.item())
                     log_str += 'lr {:.8f}'.format(lr)
                     logger.info(f"Rank:{self.gpu_id} {log_str}")
-            logger.info(f'Rank:{self.gpu_id} average train loss: {(sum_loss/i):.6f}\n')
+            logger.info(f'Rank:{self.gpu_id} average train loss: {(sum_loss/max(1, i)):.6f}\n')
 
             # All ranks must sync here; rank 0 is about to do dev eval (no collectives
             # on other ranks), so without this barrier non-zero ranks race into the next
@@ -1597,6 +1620,20 @@ class CopyNEASRParser(object):
                 dist.barrier()
 
             if self.gpu_id == 0:
+                if time_limit_reached:
+                    # Flush current model immediately before dev eval so timeout never loses progress
+                    torch.save({
+                        'epoch': epoch,
+                        'model_state_dict': self.model.module.state_dict(),
+                        'optimizer_state_dict': self.optimizer.state_dict(),
+                        'scheduler_state_dict': self.scheduler.state_dict(),
+                        'best_dev_loss': self.best_dev_loss,
+                        'best_epoch': self.best_epoch,
+                        'nbest_loss_lst': self.nbest_loss_lst,
+                        'nbest_epoch_lst': self.nbest_epoch_lst,
+                        }, self.curr_model_path)
+                    logger.info(f"Rank:{self.gpu_id} flushed {self.curr_model_path} on max_hours cutoff.")
+
                 # evaluate on dev dataset
                 this_dev_loss = self.loss_on_dev(dev_loader)
                 t = datetime.now() - start
@@ -1660,10 +1697,15 @@ class CopyNEASRParser(object):
 
             torch.cuda.empty_cache()
 
-            if getattr(self.args, 'max_hours', None) is not None:
-                hours_elapsed = (datetime.now() - train_start).total_seconds() / 3600
-                if hours_elapsed >= self.args.max_hours:
-                    logger.info(f"Rank:{self.gpu_id} max_hours={self.args.max_hours:.2f}h reached after epoch {epoch} ({hours_elapsed:.2f}h elapsed). Stopping.\n")
+            if self.max_hours is not None and self.max_hours > 0:
+                hours_elapsed = (time.monotonic() - self.train_start_monotonic) / 3600.0
+                stop_flag = 1 if (time_limit_reached or hours_elapsed >= self.max_hours) else 0
+                if dist.is_initialized():
+                    flag_tensor = torch.tensor([stop_flag], dtype=torch.int32, device=self.gpu_id)
+                    dist.broadcast(flag_tensor, src=0)
+                    stop_flag = int(flag_tensor.item())
+                if stop_flag == 1:
+                    logger.info(f"Rank:{self.gpu_id} max_hours={self.max_hours:.2f}h reached after epoch {epoch} ({hours_elapsed:.2f}h elapsed). Stopping.\n")
                     break
         
         if self.gpu_id == 0:
@@ -3006,6 +3048,11 @@ class nParaformerASRParser(object):
         self.lr = configs["optim_conf"]["lr"]
         self.warm_steps = configs["scheduler_conf"]["warmup_steps"]
         self.configs = configs
+        raw_max_hours = getattr(args, "max_hours", None)
+        if raw_max_hours is None:
+            raw_max_hours = configs.get("max_hours", None)
+        self.max_hours = float(raw_max_hours) if raw_max_hours is not None else None
+        self.train_start_monotonic = getattr(args, "train_start_monotonic", time.monotonic())
 
         self.model = init_paraformer_model(configs)
         self.gpu_id = int(os.environ["LOCAL_RANK"])

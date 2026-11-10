@@ -1,0 +1,46 @@
+# Configuration for Frozen Qwen3-ASR-0.6B + CopyNE + U2++ Bidirectional Decoding
+# Target Hardware: Kaggle 2x NVIDIA T4 (2x16GB VRAM, Turing sm_75)
+
+model:
+  qwen_model_id: "Qwen/Qwen3-ASR-0.6B-hf"
+  d_model: 896
+  vocab_size: 151936
+  d_e: 512
+  d_a: 512
+  emb_proj_dim: 256
+  lstm_layers: 3
+  lstm_dropout: 0.1
+  r2l_mode: "cross_attn"  # "cross_attn" or "rescorer"
+  r2l_layers: 3
+  r2l_heads: 4
+  r2l_dim_feedforward: 2048
+  r2l_dropout: 0.1
+  freeze_base_lm: true
+
+training:
+  batch_size: 8         # Per GPU (Global = 8 * 2 = 16)
+  accum_grad: 2         # Gradient accumulation steps (Effective batch size = 32)
+  max_epochs: 15
+  lr_modules: 0.001     # Learning rate for new modules (LSTM, CopyNE, R2L, Dict proj)
+  lr_base_lm: 0.00001   # Optional gentle fine-tuning rate for base LM head if not frozen
+  weight_decay: 0.01
+  warmup_steps: 1000
+  clip_grad_norm: 5.0
+  alpha_r2l: 0.3        # 0.0 for Row 3 (CopyNE L2R only), 0.3 for Row 4 (CopyNE + U2++)
+  alpha_copy: 1.0       # Copy supervision weight
+  eval_interval_steps: 1000
+  save_interval_steps: 1000
+  save_top_k: 3
+  max_hours: 11.0       # Kaggle session safety buffer (max 12h runtime)
+
+precision:
+  dtype: "float16"      # Native FP16 Tensor Cores on Turing T4
+  audio_clamp_value: 65504.0
+
+data:
+  max_audio_length_secs: 30.0
+  max_text_tokens: 256
+  max_entity_tokens: 32
+  max_num_entities: 100
+  sample_rate: 16000
+

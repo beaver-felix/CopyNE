@@ -1,5 +1,6 @@
 import argparse
 import os
+import time
 import torch
 from asr import CTCAttentionASRParser, CLASCTCAttentionASRParser, CopyNEASRParser
 from datetime import timedelta
@@ -12,6 +13,7 @@ def ddp_setup():
         torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
 
 def main():
+    train_start_monotonic = time.monotonic()
     ddp_setup()
     parser = argparse.ArgumentParser(description="Train CopyNE / ASR model", allow_abbrev=False)
     # Common arguments
@@ -43,11 +45,12 @@ def main():
     parser.add_argument('--dev', default='data/end2end/dev_single_bracket.json', help='path to dev file')
     parser.add_argument('--test', default='data/sp_ner/new_test.json', help='path to test file')
     parser.add_argument('--max_hours', type=float, default=None,
-                        help='stop training after this many hours (checked after each epoch)')
+                        help='stop training after this many hours (checked every optimizer step and after each epoch)')
 
     args, unknown = parser.parse_known_args()
     args, _ = parser.parse_known_args(unknown, args)
     args.mode = 'train'
+    args.train_start_monotonic = train_start_monotonic
 
     torch.manual_seed(args.seed)
     if int((torch.__version__)[0]) > 1:
