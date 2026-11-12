@@ -27,6 +27,7 @@ import torchaudio as ta
 import yaml
 
 from model.qwen_copyne_u2pp import QwenCopyNEU2PlusPlus
+from utils.qwen_copyne_data import load_ne_vocab_orjson
 
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -92,7 +93,7 @@ def parse_args():
     parser.add_argument("--model_path", "--path", type=str, default=None, help="Path to trained checkpoint (.pt) or directory")
     parser.add_argument("--qwen_model_id", type=str, default=None, help="Hugging Face model ID for Qwen3 backbone")
     parser.add_argument("--test_data", "--test", "--input", type=str, default="data_to_upload/aishell_dataset/test-ne.json", help="Path to test JSONL file")
-    parser.add_argument("--test_ne_dict", type=str, default=None, help="Optional external entity vocabulary file")
+    parser.add_argument("--test_ne_dict", type=str, default="data_to_upload/aishell_vocab/test_ne.vocab", help="Optional external entity vocabulary file")
     parser.add_argument(
         "--mode",
         type=str,
@@ -208,11 +209,7 @@ def main():
     global_entities: List[str] = []
     if args.test_ne_dict and os.path.exists(args.test_ne_dict):
         logger.info(f"Loading global entity dictionary from: {args.test_ne_dict}")
-        with open(args.test_ne_dict, "r", encoding="utf-8") as f:
-            for line in f:
-                word = line.strip()
-                if word and word not in global_entities:
-                    global_entities.append(word)
+        global_entities = load_ne_vocab_orjson(args.test_ne_dict)
         logger.info(f"Loaded {len(global_entities)} external entities.")
 
     # Read Test JSONL
@@ -258,10 +255,24 @@ def main():
         audio_np = audio_tensor.numpy()
         gold_text = sample.get("txt", "").strip()
 
-        # Gather utterance entities
+        # Extract gold entities for recall metric (supports both 'entities' and AISHELL 'ne_lst')
+        gold_entities: List[str] = []
+        if "entities" in sample and isinstance(sample["entities"], (list, tuple, set)):
+            gold_entities.extend(str(e).strip() for e in sample["entities"] if str(e).strip())
+        for item in sample.get("ne_lst", []):
+            if len(item) == 3:
+                _, st, ed = item
+                if ed >= st:
+                    cand = gold_text[st : ed + 1].strip()
+                    if cand:
+                        gold_entities.append(cand)
+
+        # Gather context dictionary entities for inference
         utt_entities = list(sample.get("entities", []))
         if not utt_entities and global_entities:
             utt_entities = list(global_entities)
+        elif not utt_entities and gold_entities:
+            utt_entities = list(dict.fromkeys(gold_entities))
 
         hyp_text = ""
 
@@ -342,22 +353,27 @@ def main():
             if "input_features" in batch:
                 batch["input_features"] = batch["input_features"].to(torch.float16)
 
-            # Build Entity Tensors
-            ent_subwords = [[im_end_id]]
+            # Build Entity Tensors (DualStackedLSTMContextEncoder appends null entity at index N)
+            ent_subwords = []
             for ent in utt_entities:
                 toks = processor.tokenizer(ent, add_special_tokens=False).input_ids
                 if toks:
                     ent_subwords.append(toks)
 
-            max_ent_len = max(len(t) for t in ent_subwords)
-            ne_l2r = torch.zeros(len(ent_subwords), max_ent_len, dtype=torch.long, device=device)
-            ne_r2l = torch.zeros(len(ent_subwords), max_ent_len, dtype=torch.long, device=device)
-            lens = []
-            for i, toks in enumerate(ent_subwords):
-                ne_l2r[i, : len(toks)] = torch.tensor(toks, dtype=torch.long, device=device)
-                ne_r2l[i, : len(toks)] = torch.tensor(list(reversed(toks)), dtype=torch.long, device=device)
-                lens.append(len(toks))
-            ne_lens = torch.tensor(lens, dtype=torch.long, device=device)
+            if len(ent_subwords) > 0:
+                max_ent_len = max(len(t) for t in ent_subwords)
+                ne_l2r = torch.full((len(ent_subwords), max_ent_len), -1, dtype=torch.long, device=device)
+                ne_r2l = torch.full((len(ent_subwords), max_ent_len), -1, dtype=torch.long, device=device)
+                lens = []
+                for i, toks in enumerate(ent_subwords):
+                    ne_l2r[i, : len(toks)] = torch.tensor(toks, dtype=torch.long, device=device)
+                    ne_r2l[i, : len(toks)] = torch.tensor(list(reversed(toks)), dtype=torch.long, device=device)
+                    lens.append(len(toks))
+                ne_lens = torch.tensor(lens, dtype=torch.long, device=device)
+            else:
+                ne_l2r = torch.empty((0, 1), dtype=torch.long, device=device)
+                ne_r2l = torch.empty((0, 1), dtype=torch.long, device=device)
+                ne_lens = torch.empty((0,), dtype=torch.long, device=device)
 
             with torch.no_grad():
                 Z_l2r, Z_r2l = copyne_model.ne_encoder(ne_l2r, ne_r2l, ne_lens)
@@ -384,8 +400,8 @@ def main():
         results_lines.append(f"{utt_id} {hyp_text}\n")
         evaluated_count += 1
 
-        # Entity Recall Accounting
-        for ent in utt_entities:
+        # Entity Recall Accounting (against utterance gold entities)
+        for ent in gold_entities:
             total_gold_entities += 1
             if ent in hyp_text:
                 total_recalled_entities += 1
@@ -403,10 +419,15 @@ def main():
                 f"Entity Recall: {current_recall:.2f}% | CER: {avg_cer:.2f}%"
             )
 
-    # Write .asr Output File
+    # Write .asr Output File (write both args.res and args.res + ".asr" for compute-necer.sh compatibility)
     with open(args.res, "w", encoding="utf-8") as f_out:
         f_out.writelines(results_lines)
     logger.info(f"Transcription hypotheses written to {args.res}")
+    if not args.res.endswith(".asr"):
+        asr_out = f"{args.res}.asr"
+        with open(asr_out, "w", encoding="utf-8") as f_asr:
+            f_asr.writelines(results_lines)
+        logger.info(f"Transcription hypotheses also written to {asr_out}")
 
     # Compute Final Benchmark Metrics
     final_recall = (total_recalled_entities / max(1, total_gold_entities)) * 100.0 if total_gold_entities > 0 else 0.0
